@@ -261,12 +261,14 @@ function createAuth(
             enableMetadata: true,
             apiKeyHeaders: ["x-api-key"],
             defaultPrefix: "spin_",
-            storage: "secondary-storage",
+            // Database (D1) storage instead of KV secondary-storage: API-key
+            // verification/rate-limit tracking otherwise writes to Workers KV on
+            // every request, which exhausts the free-tier 1,000 writes/day cap
+            // under high-volume automation. D1 has far higher write limits.
+            storage: "database",
             fallbackToDatabase: true,
             rateLimit: {
-              enabled: true,
-              timeWindow: apiKeyRateLimit.window * 1000,
-              maxRequests: apiKeyRateLimit.max,
+              enabled: false,
             },
           }),
           twoFactor({
