@@ -37,9 +37,7 @@ export const SignUpForm = ({ onSuccess }: SignUpFormProps) => {
   const turnstileRef = React.useRef<TurnstileWidgetHandle | null>(null);
   const siteKey = (import.meta.env.VITE_TURNSTILE_SITE_KEY ?? "").trim();
   const [captchaToken, setCaptchaToken] = React.useState<string | null>(null);
-  const [captchaError, setCaptchaError] = React.useState<string | null>(
-    siteKey ? null : "Captcha is not configured."
-  );
+  const [captchaError, setCaptchaError] = React.useState<string | null>(null);
 
   const form = useForm({
     defaultValues: {
@@ -51,12 +49,7 @@ export const SignUpForm = ({ onSuccess }: SignUpFormProps) => {
       onSubmit: signUpSchema,
     },
     onSubmit: async ({ value }) => {
-      if (!siteKey) {
-        setCaptchaError("Captcha is not configured.");
-        return;
-      }
-
-      if (!captchaToken) {
+      if (siteKey && !captchaToken) {
         setCaptchaError("Complete the captcha challenge.");
         return;
       }
@@ -64,7 +57,7 @@ export const SignUpForm = ({ onSuccess }: SignUpFormProps) => {
       try {
         await mutation.mutateAsync({
           ...value,
-          captchaToken,
+          captchaToken: captchaToken ?? "",
         });
         toast.success("Verification email sent. Check your inbox to continue.");
       } finally {
@@ -202,30 +195,31 @@ export const SignUpForm = ({ onSuccess }: SignUpFormProps) => {
         <p className="text-sm text-destructive">{mutation.error.message}</p>
       ) : null}
 
-      <div className="space-y-2">
-        <TurnstileWidget
-          action="sign-up"
-          onTokenChange={token => {
-            setCaptchaToken(token);
-            if (token) {
-              setCaptchaError(null);
-            }
-          }}
-          ref={turnstileRef}
-          siteKey={siteKey}
-        />
-        {captchaError ? (
-          <p className="text-sm text-destructive">{captchaError}</p>
-        ) : null}
-      </div>
+      {siteKey ? (
+        <div className="space-y-2">
+          <TurnstileWidget
+            action="sign-up"
+            onTokenChange={token => {
+              setCaptchaToken(token);
+              if (token) {
+                setCaptchaError(null);
+              }
+            }}
+            ref={turnstileRef}
+            siteKey={siteKey}
+          />
+          {captchaError ? (
+            <p className="text-sm text-destructive">{captchaError}</p>
+          ) : null}
+        </div>
+      ) : null}
 
       <Button
         className="w-full cursor-pointer"
         disabled={
           mutation.isPending ||
           googleMutation.isPending ||
-          !siteKey ||
-          !captchaToken
+          (siteKey ? !captchaToken : false)
         }
         type="submit"
       >

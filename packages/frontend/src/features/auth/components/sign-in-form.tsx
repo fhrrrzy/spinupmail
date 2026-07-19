@@ -63,9 +63,7 @@ export const SignInForm = ({
   const resendMutation = useResendVerificationEmailMutation();
   const siteKey = (import.meta.env.VITE_TURNSTILE_SITE_KEY ?? "").trim();
   const [captchaToken, setCaptchaToken] = React.useState<string | null>(null);
-  const [captchaError, setCaptchaError] = React.useState<string | null>(
-    siteKey ? null : "Captcha is not configured."
-  );
+  const [captchaError, setCaptchaError] = React.useState<string | null>(null);
   const [resendFeedback, setResendFeedback] = React.useState<string | null>(
     null
   );
@@ -88,12 +86,7 @@ export const SignInForm = ({
       onSubmit: signInSchema,
     },
     onSubmit: async ({ value }) => {
-      if (!siteKey) {
-        setCaptchaError("Captcha is not configured.");
-        return;
-      }
-
-      if (!captchaToken) {
+      if (siteKey && !captchaToken) {
         setCaptchaError("Complete the captcha challenge.");
         return;
       }
@@ -102,7 +95,7 @@ export const SignInForm = ({
       try {
         result = await mutation.mutateAsync({
           ...value,
-          captchaToken,
+          captchaToken: captchaToken ?? "",
         });
       } finally {
         turnstileRef.current?.reset();
@@ -431,22 +424,24 @@ export const SignInForm = ({
         </div>
       ) : null}
 
-      <div className="space-y-2">
-        <TurnstileWidget
-          action={isForgotPasswordMode ? "request-password-reset" : "sign-in"}
-          onTokenChange={token => {
-            setCaptchaToken(token);
-            if (token) {
-              setCaptchaError(null);
-            }
-          }}
-          ref={turnstileRef}
-          siteKey={siteKey}
-        />
-        {captchaError ? (
-          <p className="text-sm text-destructive">{captchaError}</p>
-        ) : null}
-      </div>
+      {siteKey ? (
+        <div className="space-y-2">
+          <TurnstileWidget
+            action={isForgotPasswordMode ? "request-password-reset" : "sign-in"}
+            onTokenChange={token => {
+              setCaptchaToken(token);
+              if (token) {
+                setCaptchaError(null);
+              }
+            }}
+            ref={turnstileRef}
+            siteKey={siteKey}
+          />
+          {captchaError ? (
+            <p className="text-sm text-destructive">{captchaError}</p>
+          ) : null}
+        </div>
+      ) : null}
 
       <Button
         className="w-full cursor-pointer"
@@ -454,8 +449,7 @@ export const SignInForm = ({
           mutation.isPending ||
           googleMutation.isPending ||
           forgotPasswordMutation.isPending ||
-          !siteKey ||
-          !captchaToken
+          (siteKey ? !captchaToken : false)
         }
         type="submit"
       >

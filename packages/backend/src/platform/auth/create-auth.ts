@@ -236,15 +236,19 @@ function createAuth(
         },
         plugins: [
           ...(enableE2ETestUtils ? [testUtils()] : []),
-          captcha({
-            provider: "cloudflare-turnstile",
-            secretKey: env?.TURNSTILE_SECRET_KEY ?? "",
-            endpoints: [
-              "/sign-in/email",
-              "/sign-up/email",
-              "/request-password-reset",
-            ],
-          }),
+          ...(env?.TURNSTILE_SECRET_KEY
+            ? [
+                captcha({
+                  provider: "cloudflare-turnstile",
+                  secretKey: env.TURNSTILE_SECRET_KEY,
+                  endpoints: [
+                    "/sign-in/email",
+                    "/sign-up/email",
+                    "/request-password-reset",
+                  ],
+                }),
+              ]
+            : []),
           createEmailQualificationPlugin(env),
           organization({
             allowUserToCreateOrganization: true,
