@@ -34,16 +34,12 @@ class_name = "FixedWindowRateLimiterDurableObject"
 [[d1_databases]]
 binding = "SUM_DB"
 database_name = "SUM_DB"
-database_id = "34c5ddb6-1c54-4aff-b307-5a104509a4ce"
+database_id = "fa515ec7-3d1f-4350-a176-bd1b69ac6d0f"
 migrations_dir = "drizzle"
 
 [[kv_namespaces]]
 binding = "SUM_KV"
-id = "2b0a16741ce345a4a177b48bbf2bfc30"
-
-[[r2_buckets]]
-bucket_name = "spinupmail-attachments"
-binding = "R2_BUCKET"
+id = "70e0fd1f6f014b838755000898057cf2"
 
 [[send_email]]
 name = "EMAIL"
@@ -60,8 +56,8 @@ max_retries = 2
 dead_letter_queue = "spinupmail-integration-dispatches-dlq"
 
 [vars]
-EMAIL_DOMAINS = "spinupmail.dev"
-MAX_ADDRESSES_PER_ORGANIZATION = "10"
+EMAIL_DOMAINS = "codeflai.tech"
+MAX_ADDRESSES_PER_ORGANIZATION = "1000000"
 MAX_INTEGRATIONS_PER_ORGANIZATION = "3"
 MAX_INTEGRATION_DISPATCHES_PER_ORGANIZATION_PER_DAY = "100"
 MAX_RECEIVED_EMAILS_PER_ORGANIZATION = "1000"
