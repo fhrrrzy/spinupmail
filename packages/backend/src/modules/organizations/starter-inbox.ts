@@ -450,7 +450,7 @@ export const seedStarterInbox = async ({
   userId: string;
   organizationName: string;
 }): Promise<SeedStarterInboxResult> => {
-  const allowedDomains = getAllowedDomains(env);
+  const allowedDomains = await getAllowedDomains(env);
   const defaultDomain = allowedDomains[0];
   if (!defaultDomain) {
     throw new Error("EMAIL_DOMAINS is not configured");

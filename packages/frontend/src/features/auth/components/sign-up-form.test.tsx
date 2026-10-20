@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { toast } from "sonner";
 import { SignUpForm } from "@/features/auth/components/sign-up-form";
+import { TestQueryProvider } from "@/test/render-utils";
 import {
   useGoogleSignUpMutation,
   useSignUpMutation,
@@ -63,7 +64,11 @@ describe("SignUpForm", () => {
       error: null,
     } as unknown as ReturnType<typeof useSignUpMutation>);
 
-    render(<SignUpForm onSuccess={onSuccess} />);
+    render(
+      <TestQueryProvider>
+        <SignUpForm onSuccess={onSuccess} />
+      </TestQueryProvider>
+    );
 
     fireEvent.change(screen.getByLabelText("Name"), {
       target: { value: "Ada Lovelace" },

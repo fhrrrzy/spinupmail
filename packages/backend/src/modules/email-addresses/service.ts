@@ -425,7 +425,7 @@ export const createEmailAddress = async ({
   payload: unknown;
 }) => {
   const body = parseCreateBody(payload);
-  const allowedDomains = getAllowedDomains(env);
+  const allowedDomains = await getAllowedDomains(env);
   const domainFromBody =
     typeof body.domain === "string" && body.domain.trim().length > 0
       ? body.domain.trim().toLowerCase()
@@ -804,7 +804,7 @@ export const updateEmailAddress = async ({
     };
   }
 
-  const allowedDomains = getAllowedDomains(env);
+  const allowedDomains = await getAllowedDomains(env);
   if (allowedDomains.length === 0) {
     return {
       status: 400 as const,

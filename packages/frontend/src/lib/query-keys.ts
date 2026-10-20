@@ -14,6 +14,7 @@ export type AdminAnomaliesQueryKeyOptions = {
 };
 
 export const queryKeys = {
+  authConfig: ["app", "auth", "config"] as const,
   adminOverview: ["app", "admin", "overview"] as const,
   adminActivity: (timezone: string) =>
     ["app", "admin", "activity", timezone] as const,

@@ -436,6 +436,25 @@ To setup automatic deployments:
 If you use multiple domains, repeat the routing rule for each domain you add to
 `EMAIL_DOMAINS` and add the domains in the `EMAIL_DOMAINS` variable in `wrangler.toml` as comma separated values.
 
+### Large domain lists (KV override)
+
+`EMAIL_DOMAINS` is a Worker text variable, so Cloudflare caps it at 5 KB
+(roughly 285 domains). For more domains, store the authoritative list in the
+`SUM_KV` namespace under `config:email-domains` as a JSON array of names:
+
+```sh
+curl -X PUT \
+  "https://api.cloudflare.com/client/v4/accounts/$ACCOUNT_ID/storage/kv/namespaces/$SUM_KV_ID/values/config%3Aemail-domains" \
+  -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+  -H "Content-Type: text/plain" \
+  --data-binary '["spinupmail.com","spinupmail.dev"]'
+```
+
+The Worker reads the KV list first (cached per isolate for 60 s) and falls back
+to `EMAIL_DOMAINS` when the key is missing or KV is unavailable. Order matters:
+the first entry is the default domain offered for new inboxes and the starter
+inbox.
+
 ## 7. Configure Custom Domain for Worker API
 
 1. Open Build -> Compute -> Workers&Pages section in Cloudflare dashboard

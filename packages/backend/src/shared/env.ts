@@ -91,12 +91,66 @@ export const getExtensionRedirectOrigins = (
   return Array.from(new Set(origins));
 };
 
-export const getAllowedDomains = (env: CloudflareBindings) => {
-  const rawList =
-    env.EMAIL_DOMAINS?.split(",")
-      .map(domain => normalizeDomain(domain))
-      .filter(Boolean) ?? [];
-  return Array.from(new Set(rawList));
+export const ALLOWED_DOMAINS_KV_KEY = "config:email-domains";
+const ALLOWED_DOMAINS_CACHE_TTL_MS = 60_000;
+
+let allowedDomainsCache: {
+  cacheKey: string;
+  expiresAt: number;
+  domains: string[];
+} | null = null;
+
+const normalizeDomainList = (raw: unknown) => {
+  const values = Array.isArray(raw)
+    ? raw
+    : typeof raw === "string"
+      ? raw.split(",")
+      : [];
+  const normalized = values
+    .filter((value): value is string => typeof value === "string")
+    .map(domain => normalizeDomain(domain))
+    .filter(Boolean);
+  return Array.from(new Set(normalized));
+};
+
+/**
+ * Domains available for new inboxes.
+ *
+ * `EMAIL_DOMAINS` is capped at 5 KB per Worker variable (~285 domains), so the
+ * authoritative list lives in KV under {@link ALLOWED_DOMAINS_KV_KEY} and the
+ * variable is only the fallback. The KV read is cached per isolate.
+ */
+export const getAllowedDomains = async (env: CloudflareBindings) => {
+  const cacheKey = `${env.EMAIL_DOMAINS ?? ""}|${env.SUM_KV ? "kv" : "env"}`;
+  const now = Date.now();
+  if (
+    allowedDomainsCache &&
+    allowedDomainsCache.cacheKey === cacheKey &&
+    allowedDomainsCache.expiresAt > now
+  ) {
+    return allowedDomainsCache.domains;
+  }
+
+  let domains = normalizeDomainList(env.EMAIL_DOMAINS);
+  if (env.SUM_KV) {
+    try {
+      const stored = normalizeDomainList(
+        await env.SUM_KV.get(ALLOWED_DOMAINS_KV_KEY, "json")
+      );
+      if (stored.length > 0) {
+        domains = stored;
+      }
+    } catch {
+      // Keep the EMAIL_DOMAINS fallback when KV is unavailable.
+    }
+  }
+
+  allowedDomainsCache = {
+    cacheKey,
+    expiresAt: now + ALLOWED_DOMAINS_CACHE_TTL_MS,
+    domains,
+  };
+  return domains;
 };
 
 export const getAuthAllowedEmailDomain = (
@@ -310,6 +364,12 @@ export const getApiKeyUsageRateLimitConfig = (
     parsePositiveInteger(env?.API_KEY_RATE_LIMIT_MAX?.trim()) ??
     API_KEY_RATE_LIMIT_MAX_DEFAULT,
 });
+
+export const isGoogleAuthEnabled = (
+  env?: Pick<CloudflareBindings, "GOOGLE_CLIENT_ID" | "GOOGLE_CLIENT_SECRET">
+) =>
+  Boolean(env?.GOOGLE_CLIENT_ID?.trim()) &&
+  Boolean(env?.GOOGLE_CLIENT_SECRET?.trim());
 
 export const isE2ETestUtilsEnabled = (
   env?: Pick<CloudflareBindings, "ENABLE_E2E_TEST_UTILS">

@@ -524,6 +524,13 @@ export const listRecentAddressActivity = async (options?: {
   );
 };
 
+export type AuthConfig = {
+  googleAuthEnabled: boolean;
+};
+
+export const getAuthConfig = async (options?: { signal?: AbortSignal }) =>
+  apiFetch<AuthConfig>("/api/config", { signal: options?.signal });
+
 export const listDomains = async (options?: {
   signal?: AbortSignal;
   organizationId?: string | null;

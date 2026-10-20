@@ -7,7 +7,21 @@ Versioning for tagged releases.
 
 ## [Unreleased]
 
-- No unreleased changes yet.
+### Added
+
+- Domain allow-list can now come from KV (`config:email-domains`) so deployments
+  can offer far more than the 5 KB `EMAIL_DOMAINS` variable allows; the variable
+  remains the fallback.
+- The create-address domain field is a searchable combobox, so long domain lists
+  stay usable.
+- `GET /api/config` reports deployment auth capabilities; the sign-in and sign-up
+  forms only render "Continue with Google" when the Worker has
+  `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET`.
+
+### Fixed
+
+- Pages deployments no longer drop the `/api/*` proxy worker, which had made the
+  dashboard load but fail every API call.
 
 ## [0.3.0](https://github.com/ridvan/spinupmail/releases/tag/v0.3.0) - 2026-04-25
 

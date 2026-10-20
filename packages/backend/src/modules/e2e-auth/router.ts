@@ -10,6 +10,10 @@ import {
   updateAddressLastReceivedAt,
 } from "@/modules/inbound-email/repo";
 import { getDb } from "@/platform/db/client";
+import {
+  clearE2EEmailTokens,
+  getLatestE2EEmailToken,
+} from "@/platform/auth/e2e-email-token-sink";
 import { getE2ETestSecret, isE2ETestUtilsEnabled } from "@/shared/env";
 
 const organizationSchema = z
@@ -23,7 +27,13 @@ const credentialsSchema = z.object({
   email: z.string().email().optional(),
   password: z.string().min(8).optional(),
   name: z.string().trim().min(1).optional(),
+  role: z.string().trim().min(1).optional(),
   organization: organizationSchema,
+});
+
+const emailLookupSchema = z.object({
+  email: z.string().email(),
+  type: z.enum(["verification", "reset-password"]).optional(),
 });
 
 const sessionSchema = z.object({
@@ -173,6 +183,7 @@ export const createE2EAuthTestRouter = () => {
 
       await ctx.internalAdapter.updateUser(user.user.id, {
         emailVerified: true,
+        ...(payload.role ? { role: payload.role } : {}),
       });
 
       const organization = await createOrganizationForUser(
@@ -186,6 +197,48 @@ export const createE2EAuthTestRouter = () => {
         organizationId: organization ? String(organization.id) : null,
         email,
         password,
+        role: payload.role ?? "user",
+      });
+    }
+  );
+
+  router.post(
+    "/test/auth/email-token",
+    zValidator("json", emailLookupSchema),
+    async c => {
+      const payload = c.req.valid("json");
+      const captured = getLatestE2EEmailToken({
+        email: payload.email,
+        type: payload.type,
+      });
+
+      if (!captured) {
+        return c.json({ error: "token not found" }, 404);
+      }
+
+      return c.json(captured);
+    }
+  );
+
+  router.post(
+    "/test/auth/lookup-user",
+    zValidator("json", emailLookupSchema.pick({ email: true })),
+    async c => {
+      const payload = c.req.valid("json");
+      const { ctx } = await getTestContext(c);
+      const user = await ctx.internalAdapter.findUserByEmail(payload.email, {
+        includeAccounts: false,
+      });
+
+      if (!user?.user) {
+        return c.json({ error: "user not found" }, 404);
+      }
+
+      return c.json({
+        userId: user.user.id,
+        email: user.user.email,
+        role: (user.user as { role?: string | null }).role ?? null,
+        emailVerified: Boolean(user.user.emailVerified),
       });
     }
   );
@@ -240,6 +293,8 @@ export const createE2EAuthTestRouter = () => {
       for (const userId of uniq(payload.userIds)) {
         await test.deleteUser(userId).catch(() => undefined);
       }
+
+      clearE2EEmailTokens();
 
       return c.json({ status: true });
     }

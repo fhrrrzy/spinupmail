@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { zValidator } from "@hono/zod-validator";
 import type { AppHonoEnv } from "@/app/types";
 import { requireAuth } from "@/app/middleware/require-auth";
+import { isGoogleAuthEnabled } from "@/shared/env";
 import { handleAuthRequest } from "./handler";
 import {
   requestPasswordSetupLinkSchema,
@@ -62,6 +63,12 @@ const isAllowedPasswordSetupCallbackURL = (
 
 export const createAuthHttpRouter = () => {
   const router = new Hono<AppHonoEnv>();
+
+  router.get("/config", c =>
+    c.json({ googleAuthEnabled: isGoogleAuthEnabled(c.env) }, 200, {
+      "Cache-Control": "no-store",
+    })
+  );
 
   router.post(
     "/auth/resend-verification",

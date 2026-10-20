@@ -398,7 +398,9 @@ export const isDisposableEmailDomain = async (
 ) => {
   const normalizedDomain = normalizeDomain(domain);
   if (!normalizedDomain) return false;
-  if (env && getAllowedDomains(env).includes(normalizedDomain)) return false;
+  if (env && (await getAllowedDomains(env)).includes(normalizedDomain)) {
+    return false;
+  }
   if (!env?.SUM_KV) return false;
 
   let manifest = await readManifest(env);

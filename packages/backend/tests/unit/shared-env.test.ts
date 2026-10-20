@@ -1,4 +1,5 @@
 import {
+  ALLOWED_DOMAINS_KV_KEY,
   getApiKeyUsageRateLimitConfig,
   getAuthAllowedEmailDomain,
   getAuthRateLimitConfig,
@@ -31,15 +32,32 @@ describe("shared env helpers", () => {
     ).toBe("example.com");
   });
 
-  it("normalizes EMAIL_DOMAINS values and deduplicates them", () => {
+  it("normalizes EMAIL_DOMAINS values and deduplicates them", async () => {
     const env = {
       EMAIL_DOMAINS: "Example.com,foo.test,@bar.io.,foo.test",
     } as unknown as CloudflareBindings;
 
-    expect(getAllowedDomains(env)).toEqual([
+    await expect(getAllowedDomains(env)).resolves.toEqual([
       "example.com",
       "foo.test",
       "bar.io",
+    ]);
+  });
+
+  it("prefers the KV domain list over EMAIL_DOMAINS", async () => {
+    const env = {
+      EMAIL_DOMAINS: "fallback.test",
+      SUM_KV: {
+        get: async (key: string) =>
+          key === ALLOWED_DOMAINS_KV_KEY
+            ? ["KV-One.test", "kv-two.test", "kv-one.test", 42]
+            : null,
+      },
+    } as unknown as CloudflareBindings;
+
+    await expect(getAllowedDomains(env)).resolves.toEqual([
+      "kv-one.test",
+      "kv-two.test",
     ]);
   });
 

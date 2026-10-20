@@ -5,8 +5,8 @@ import {
   getMaxReceivedEmailsPerOrganization,
 } from "@/shared/env";
 
-export const getDomainsResponse = (env: CloudflareBindings) => {
-  const allowed = getAllowedDomains(env);
+export const getDomainsResponse = async (env: CloudflareBindings) => {
+  const allowed = await getAllowedDomains(env);
   if (allowed.length === 0) {
     return {
       status: 500 as const,

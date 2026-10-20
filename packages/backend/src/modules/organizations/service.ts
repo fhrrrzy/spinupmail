@@ -123,7 +123,7 @@ export const createOrganization = async ({
   }
 
   const name = parsed.data.name.trim();
-  const allowedDomains = getAllowedDomains(env);
+  const allowedDomains = await getAllowedDomains(env);
   if (allowedDomains.length === 0) {
     return {
       status: 400 as const,

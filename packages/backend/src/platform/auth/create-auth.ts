@@ -26,11 +26,13 @@ import {
   createResendResetPasswordEmailSender,
   createResendVerificationEmailSender,
 } from "./email-sender";
+import { captureE2EEmailToken } from "./e2e-email-token-sink";
 import {
   getAuthAllowedEmailDomain,
   getAuthRateLimitConfig,
   getApiKeyUsageRateLimitConfig,
   isE2ETestUtilsEnabled,
+  isGoogleAuthEnabled,
 } from "@/shared/env";
 
 const PASSWORD_SALT_BYTES = 16;
@@ -98,7 +100,7 @@ function createAuth(
   const db = env ? drizzle(env.SUM_DB, { schema }) : undefined;
   const googleClientId = env?.GOOGLE_CLIENT_ID?.trim();
   const googleClientSecret = env?.GOOGLE_CLIENT_SECRET?.trim();
-  const hasGoogleOAuth = Boolean(googleClientId) && Boolean(googleClientSecret);
+  const hasGoogleOAuth = isGoogleAuthEnabled(env);
   const authAllowedEmailDomain = getAuthAllowedEmailDomain(env);
   const authRateLimit = getAuthRateLimitConfig(env);
   const apiKeyRateLimit = getApiKeyUsageRateLimitConfig(env);
@@ -122,10 +124,40 @@ function createAuth(
     .map(origin => origin.trim())
     .filter(Boolean);
   const sendVerificationEmail = enableE2ETestUtils
-    ? async () => undefined
+    ? async ({
+        user,
+        url,
+        token,
+      }: {
+        user: { email: string };
+        url: string;
+        token: string;
+      }) => {
+        captureE2EEmailToken({
+          type: "verification",
+          email: user.email,
+          token,
+          url,
+        });
+      }
     : createResendVerificationEmailSender(env);
   const sendResetPassword = enableE2ETestUtils
-    ? async () => undefined
+    ? async ({
+        user,
+        url,
+        token,
+      }: {
+        user: { email: string };
+        url: string;
+        token: string;
+      }) => {
+        captureE2EEmailToken({
+          type: "reset-password",
+          email: user.email,
+          token,
+          url,
+        });
+      }
     : createResendResetPasswordEmailSender(env);
 
   return betterAuth({

@@ -23,7 +23,33 @@ type CredentialSeedOptions = {
   email?: string;
   password?: string;
   name?: string;
+  role?: string;
   organization?: SeedOrganizationOptions;
+};
+
+type CredentialSeedResponse = {
+  userId: string;
+  organizationId: string | null;
+  email: string;
+  password: string;
+  role?: string;
+};
+
+type EmailTokenType = "verification" | "reset-password";
+
+type EmailTokenResponse = {
+  type: EmailTokenType;
+  email: string;
+  token: string;
+  url: string;
+  capturedAt: number;
+};
+
+type LookupUserResponse = {
+  userId: string;
+  email: string;
+  role: string | null;
+  emailVerified: boolean;
 };
 
 type SessionSeedOptions = {
@@ -41,13 +67,6 @@ type TestCookie = {
   secure?: boolean;
   sameSite?: "Lax" | "Strict" | "None";
   expires?: number;
-};
-
-type CredentialSeedResponse = {
-  userId: string;
-  organizationId: string | null;
-  email: string;
-  password: string;
 };
 
 type SessionSeedResponse = {
@@ -108,6 +127,12 @@ export type AuthSeedHelper = {
   signInWithSeededSession: (
     options?: SessionSeedOptions
   ) => Promise<SessionSeedResponse>;
+  getEmailToken: (options: {
+    email: string;
+    type?: EmailTokenType;
+  }) => Promise<EmailTokenResponse>;
+  lookupUser: (options: { email: string }) => Promise<LookupUserResponse>;
+  trackUserId: (userId: string) => void;
   createAddress: (options: AddressSeedOptions) => Promise<AddressSeedResponse>;
   createInboxEmail: (
     options: InboxEmailSeedOptions
@@ -273,6 +298,44 @@ export const test = base.extend<{
         );
         await waitForSeededSession(request, result.cookies);
         return result;
+      },
+      getEmailToken: async options => {
+        for (let attempt = 0; attempt < 20; attempt += 1) {
+          const response = await request.post(
+            `${BACKEND_BASE_URL}/api/test/auth/email-token`,
+            {
+              headers: {
+                "x-e2e-test-secret": E2E_TEST_SECRET,
+              },
+              data: options,
+              failOnStatusCode: false,
+            }
+          );
+
+          if (response.ok()) {
+            return (await response.json()) as EmailTokenResponse;
+          }
+
+          await new Promise(resolve => setTimeout(resolve, 100));
+        }
+
+        throw new Error(
+          `Email token not captured for ${options.email}${
+            options.type ? ` (${options.type})` : ""
+          }`
+        );
+      },
+      lookupUser: async options => {
+        const result = await postJson<LookupUserResponse>(
+          request,
+          "/api/test/auth/lookup-user",
+          options
+        );
+        trackedUserIds.add(result.userId);
+        return result;
+      },
+      trackUserId: userId => {
+        trackedUserIds.add(userId);
       },
       createAddress: async options => {
         return postJson<AddressSeedResponse>(

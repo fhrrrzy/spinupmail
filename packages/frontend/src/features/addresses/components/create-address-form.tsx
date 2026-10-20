@@ -36,14 +36,6 @@ import {
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { SendIcon, type SendIconHandle } from "@/components/ui/send";
-import { Skeleton } from "@/components/ui/skeleton";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import {
   Tooltip,
@@ -51,6 +43,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { DomainTagsInput } from "@/features/addresses/components/address-form-fields";
+import { DomainPicker } from "@/features/addresses/components/domain-picker";
 import {
   formatForcedLocalPartPrefix,
   getCustomLocalPartMaxLength,
@@ -198,100 +191,6 @@ const getNormalizedSelectedDomain = (value: string) =>
 const getSingleAvailableDomain = (availableDomains: string[]) =>
   availableDomains.length === 1 ? (availableDomains[0] ?? "") : "";
 
-const createAddressSchema = (
-  availableDomains: string[],
-  localPartMaxLength: number,
-  maxReceivedEmailsPerAddress: number
-) =>
-  z.object({
-    localPart: z
-      .string()
-      .trim()
-      .min(1, "Username is required")
-      .max(localPartMaxLength, {
-        message: `Username must be ${localPartMaxLength} characters or fewer`,
-      })
-      .refine(value => addressPartRegex.test(value), {
-        message:
-          "Username can contain letters, numbers, dot, underscore, plus, and dash",
-      })
-      .refine(value => !hasReservedLocalPartKeyword(value), {
-        message: "This username is reserved and cannot be used",
-      }),
-    ttlMinutes: z.union([
-      z
-        .number()
-        .int({ message: "TTL must be a whole number" })
-        .positive({ message: "TTL must be a positive number" })
-        .max(ADDRESS_TTL_MAX_MINUTES, {
-          message: `TTL must be ${ADDRESS_TTL_MAX_MINUTES} minutes or less`,
-        }),
-      z.undefined(),
-    ]),
-    domain: z.string().superRefine((value, ctx) => {
-      const normalizedDomain = getNormalizedSelectedDomain(value);
-      const selectedDomain =
-        normalizedDomain || getSingleAvailableDomain(availableDomains);
-
-      if (!selectedDomain) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          message: "Domain is required",
-        });
-        return;
-      }
-
-      if (!availableDomains.includes(selectedDomain)) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          message: "Select one of the available domains",
-        });
-      }
-    }),
-    allowedFromDomains: z
-      .array(z.string().trim())
-      .max(ALLOWED_FROM_DOMAINS_MAX_ITEMS, {
-        message: `You can add up to ${ALLOWED_FROM_DOMAINS_MAX_ITEMS} allowed sender domains`,
-      })
-      .refine(
-        values =>
-          values.every(
-            domain => domain.length <= ALLOWED_FROM_DOMAIN_MAX_LENGTH
-          ),
-        `Each allowed sender domain must be ${ALLOWED_FROM_DOMAIN_MAX_LENGTH} characters or fewer`
-      )
-      .refine(
-        values => values.every(domain => domainRegex.test(domain)),
-        "Use valid hostnames like `example.com`"
-      ),
-    integrationIds: z.array(z.string()),
-    maxReceivedEmailCount: z
-      .union([
-        z
-          .number()
-          .int({ message: "Max received emails must be a whole number" })
-          .positive({
-            message: "Max received emails must be a positive number",
-          })
-          .max(maxReceivedEmailsPerAddress, {
-            message: `Max received emails must be ${maxReceivedEmailsPerAddress} or less`,
-          }),
-        z.undefined(),
-      ])
-      .refine(value => value !== undefined, {
-        message: "Max received emails is required",
-      }),
-    maxReceivedEmailAction: z
-      .union([z.enum(ADDRESS_MAX_RECEIVED_EMAIL_ACTIONS), z.literal("")])
-      .refine(value => value !== "", {
-        message: "Choose what happens when the limit is reached",
-      }),
-    acceptedRiskNotice: z.boolean().refine(value => value, {
-      message:
-        "You must accept the Terms and Privacy Policy to create an address",
-    }),
-  });
-
 export const CreateAddressForm = ({
   domains,
   isDomainsLoading = false,
@@ -306,6 +205,18 @@ export const CreateAddressForm = ({
   const sendIconRef = useRef<SendIconHandle>(null);
   const [selectedIntegrationProvider, setSelectedIntegrationProvider] =
     useState<IntegrationProvider | "">("");
+  const [isBulk, setIsBulk] = useState(false);
+  const [bulkNamingType, setBulkNamingType] = useState<"random" | "sequential">(
+    "random"
+  );
+  const [bulkCount, setBulkCount] = useState(5);
+  const [bulkPrefix, setBulkPrefix] = useState("relay");
+  const [bulkStartIndex, setBulkStartIndex] = useState(1);
+  const [bulkCountError, setBulkCountError] = useState<string | null>(null);
+  const [bulkPrefixError, setBulkPrefixError] = useState<string | null>(null);
+  const [bulkStartIndexError, setBulkStartIndexError] = useState<string | null>(
+    null
+  );
   const availableDomains = useMemo(() => uniqueDomains(domains), [domains]);
   const availableIntegrations = useMemo(
     () =>
@@ -376,67 +287,338 @@ export const CreateAddressForm = ({
     acceptedRiskNotice: false,
   };
 
+  const validationParamsRef = useRef({
+    availableDomains,
+    canManageIntegrations,
+    availableIntegrationIds,
+    resolvedMaxReceivedEmailsPerAddress,
+    isBulk,
+    bulkCount,
+    bulkNamingType,
+    bulkPrefix,
+    bulkStartIndex,
+    localPartMaxLength,
+  });
+  validationParamsRef.current = {
+    availableDomains,
+    canManageIntegrations,
+    availableIntegrationIds,
+    resolvedMaxReceivedEmailsPerAddress,
+    isBulk,
+    bulkCount,
+    bulkNamingType,
+    bulkPrefix,
+    bulkStartIndex,
+    localPartMaxLength,
+  };
+
+  const schema = useMemo(() => {
+    return z.object({
+      localPart: z
+        .string()
+        .trim()
+        .superRefine((val, ctx) => {
+          const { isBulk: latestIsBulk, localPartMaxLength: latestLength } =
+            validationParamsRef.current;
+          if (latestIsBulk) return;
+          if (!val) {
+            ctx.addIssue({
+              code: z.ZodIssueCode.custom,
+              message: "Username is required",
+            });
+            return;
+          }
+          if (val.length > latestLength) {
+            ctx.addIssue({
+              code: z.ZodIssueCode.custom,
+              message: `Username must be ${latestLength} characters or fewer`,
+            });
+          }
+          if (!addressPartRegex.test(val)) {
+            ctx.addIssue({
+              code: z.ZodIssueCode.custom,
+              message:
+                "Username can contain letters, numbers, dot, underscore, plus, and dash",
+            });
+          }
+          if (hasReservedLocalPartKeyword(val)) {
+            ctx.addIssue({
+              code: z.ZodIssueCode.custom,
+              message: "This username is reserved and cannot be used",
+            });
+          }
+        }),
+      ttlMinutes: z.union([
+        z
+          .number()
+          .int({ message: "TTL must be a whole number" })
+          .positive({ message: "TTL must be a positive number" })
+          .max(ADDRESS_TTL_MAX_MINUTES, {
+            message: `TTL must be ${ADDRESS_TTL_MAX_MINUTES} minutes or less`,
+          }),
+        z.undefined(),
+      ]),
+      domain: z.string().superRefine((value, ctx) => {
+        const { availableDomains: latestDomains } = validationParamsRef.current;
+        const normalizedDomain = getNormalizedSelectedDomain(value);
+        const selectedDomain =
+          normalizedDomain || getSingleAvailableDomain(latestDomains);
+
+        if (!selectedDomain) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: "Domain is required",
+          });
+          return;
+        }
+
+        if (!latestDomains.includes(selectedDomain)) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: "Select one of the available domains",
+          });
+        }
+      }),
+      allowedFromDomains: z
+        .array(z.string().trim())
+        .max(ALLOWED_FROM_DOMAINS_MAX_ITEMS, {
+          message: `You can add up to ${ALLOWED_FROM_DOMAINS_MAX_ITEMS} allowed sender domains`,
+        })
+        .refine(
+          values =>
+            values.every(
+              domain => domain.length <= ALLOWED_FROM_DOMAIN_MAX_LENGTH
+            ),
+          `Each allowed sender domain must be ${ALLOWED_FROM_DOMAIN_MAX_LENGTH} characters or fewer`
+        )
+        .refine(
+          values => values.every(domain => domainRegex.test(domain)),
+          "Use valid hostnames like `example.com`"
+        ),
+      integrationIds: z.array(z.string()),
+      maxReceivedEmailCount: z
+        .union([
+          z
+            .number()
+            .int({ message: "Max received emails must be a whole number" })
+            .positive({
+              message: "Max received emails must be a positive number",
+            })
+            .superRefine((val, ctx) => {
+              const { resolvedMaxReceivedEmailsPerAddress: latestEmails } =
+                validationParamsRef.current;
+              if (val > latestEmails) {
+                ctx.addIssue({
+                  code: z.ZodIssueCode.custom,
+                  message: `Max received emails must be ${latestEmails} or less`,
+                });
+              }
+            }),
+          z.undefined(),
+        ])
+        .refine(value => value !== undefined, {
+          message: "Max received emails is required",
+        }),
+      maxReceivedEmailAction: z
+        .union([z.enum(ADDRESS_MAX_RECEIVED_EMAIL_ACTIONS), z.literal("")])
+        .refine(value => value !== "", {
+          message: "Choose what happens when the limit is reached",
+        }),
+      acceptedRiskNotice: z.boolean().refine(value => value, {
+        message:
+          "You must accept the Terms and Privacy Policy to create an address",
+      }),
+    });
+  }, []);
+
   const form = useForm({
     defaultValues,
     validators: {
-      onSubmit: createAddressSchema(
-        availableDomains,
-        localPartMaxLength,
-        resolvedMaxReceivedEmailsPerAddress
-      ),
+      onSubmit: schema,
     },
     onSubmit: async ({ value }) => {
+      const {
+        availableDomains: latestDomains,
+        canManageIntegrations: latestCanManage,
+        availableIntegrationIds: latestIntegrationIds,
+        resolvedMaxReceivedEmailsPerAddress: latestEmails,
+        isBulk: latestIsBulk,
+        bulkCount: latestBulkCount,
+        bulkNamingType: latestNamingType,
+        bulkPrefix: latestPrefix,
+        bulkStartIndex: latestStartIndex,
+        localPartMaxLength: latestLength,
+      } = validationParamsRef.current;
+
       const normalizedDomain = getNormalizedSelectedDomain(value.domain);
       const selectedDomain =
         normalizedDomain ||
-        getSingleAvailableDomain(availableDomains) ||
+        getSingleAvailableDomain(latestDomains) ||
         undefined;
       const allowedFromDomains = uniqueDomains(value.allowedFromDomains);
       const selectedIntegrationIds = value.integrationIds.filter(
-        integrationId => availableIntegrationIds.has(integrationId)
+        integrationId => latestIntegrationIds.has(integrationId)
       );
-      const createAddressToast = toast.promise(
-        createMutation.mutateAsync({
-          localPart: value.localPart.trim(),
-          ttlMinutes: value.ttlMinutes,
-          domain: selectedDomain,
-          allowedFromDomains:
-            allowedFromDomains.length > 0 ? allowedFromDomains : undefined,
-          integrationSubscriptions: canManageIntegrations
-            ? selectedIntegrationIds.map(integrationId => ({
-                integrationId,
-                eventType: "email.received" as const,
-              }))
-            : undefined,
-          maxReceivedEmailCount:
-            value.maxReceivedEmailCount ?? resolvedMaxReceivedEmailsPerAddress,
-          maxReceivedEmailAction:
-            value.maxReceivedEmailAction === ""
-              ? undefined
-              : value.maxReceivedEmailAction,
-          acceptedRiskNotice: value.acceptedRiskNotice,
-        }),
-        {
-          loading: "Creating address...",
-          success: createdAddress => ({
-            message: "Address created.",
-            action: createdAddress?.address
-              ? {
-                  label: "Copy address",
-                  onClick: () => {
-                    void copyCreatedAddress(createdAddress.address);
-                  },
-                }
-              : undefined,
-          }),
-          error: error =>
-            error instanceof Error ? error.message : "Unable to create address",
+
+      if (latestIsBulk) {
+        let hasErrors = false;
+        if (!latestBulkCount || latestBulkCount < 1 || latestBulkCount > 20) {
+          setBulkCountError("Quantity must be between 1 and 20.");
+          hasErrors = true;
         }
-      );
-      try {
-        await createAddressToast.unwrap();
-      } catch {
-        return;
+        if (latestNamingType === "sequential") {
+          if (!latestPrefix) {
+            setBulkPrefixError("Prefix is required.");
+            hasErrors = true;
+          } else if (!addressPartRegex.test(latestPrefix)) {
+            setBulkPrefixError(
+              "Prefix can contain letters, numbers, dot, underscore, plus, and dash."
+            );
+            hasErrors = true;
+          } else {
+            const maxIndex = latestStartIndex + latestBulkCount - 1;
+            const maxSuffixLength = String(maxIndex).length + 1;
+            const maxPrefixLength = latestLength - maxSuffixLength;
+            if (latestPrefix.length > maxPrefixLength) {
+              setBulkPrefixError(
+                `Prefix must be ${maxPrefixLength} characters or fewer.`
+              );
+              hasErrors = true;
+            }
+          }
+          if (latestStartIndex < 0) {
+            setBulkStartIndexError("Start number must be 0 or greater.");
+            hasErrors = true;
+          }
+        }
+
+        if (hasErrors) {
+          return;
+        }
+
+        const localParts: string[] = [];
+        if (latestNamingType === "random") {
+          let prev = "";
+          for (let i = 0; i < latestBulkCount; i++) {
+            const candidate = generateRandomLocalPart(prev, latestLength);
+            localParts.push(candidate);
+            prev = candidate;
+          }
+        } else {
+          for (let i = 0; i < latestBulkCount; i++) {
+            localParts.push(`${latestPrefix}-${latestStartIndex + i}`);
+          }
+        }
+
+        const createBulkAddresses = async () => {
+          const results: string[] = [];
+          const errors: string[] = [];
+          for (const lp of localParts) {
+            try {
+              const res = await createMutation.mutateAsync({
+                localPart: lp,
+                ttlMinutes: value.ttlMinutes,
+                domain: selectedDomain,
+                allowedFromDomains:
+                  allowedFromDomains.length > 0
+                    ? allowedFromDomains
+                    : undefined,
+                integrationSubscriptions: latestCanManage
+                  ? selectedIntegrationIds.map(integrationId => ({
+                      integrationId,
+                      eventType: "email.received" as const,
+                    }))
+                  : undefined,
+                maxReceivedEmailCount:
+                  value.maxReceivedEmailCount ?? latestEmails,
+                maxReceivedEmailAction:
+                  value.maxReceivedEmailAction === ""
+                    ? undefined
+                    : value.maxReceivedEmailAction,
+                acceptedRiskNotice: value.acceptedRiskNotice,
+              });
+              results.push(res.address);
+            } catch (err) {
+              const msg = err instanceof Error ? err.message : "Error";
+              errors.push(`${lp}: ${msg}`);
+              if (msg.toLowerCase().includes("limit reached")) {
+                break;
+              }
+            }
+          }
+          if (errors.length > 0) {
+            if (results.length > 0) {
+              throw new Error(
+                `Created ${results.length} addresses, but failed ${errors.length}: ${errors.join(", ")}`
+              );
+            } else {
+              throw new Error(
+                `Failed to create addresses: ${errors.join(", ")}`
+              );
+            }
+          }
+          return results;
+        };
+
+        const createBulkToast = toast.promise(createBulkAddresses(), {
+          loading: `Creating ${latestBulkCount} addresses...`,
+          success: `Created ${latestBulkCount} addresses successfully.`,
+          error: error =>
+            error instanceof Error
+              ? error.message
+              : "Unable to create addresses",
+        });
+
+        try {
+          await createBulkToast.unwrap();
+        } catch {
+          return;
+        }
+      } else {
+        const createAddressToast = toast.promise(
+          createMutation.mutateAsync({
+            localPart: value.localPart.trim(),
+            ttlMinutes: value.ttlMinutes,
+            domain: selectedDomain,
+            allowedFromDomains:
+              allowedFromDomains.length > 0 ? allowedFromDomains : undefined,
+            integrationSubscriptions: latestCanManage
+              ? selectedIntegrationIds.map(integrationId => ({
+                  integrationId,
+                  eventType: "email.received" as const,
+                }))
+              : undefined,
+            maxReceivedEmailCount: value.maxReceivedEmailCount ?? latestEmails,
+            maxReceivedEmailAction:
+              value.maxReceivedEmailAction === ""
+                ? undefined
+                : value.maxReceivedEmailAction,
+            acceptedRiskNotice: value.acceptedRiskNotice,
+          }),
+          {
+            loading: "Creating address...",
+            success: createdAddress => ({
+              message: "Address created.",
+              action: createdAddress?.address
+                ? {
+                    label: "Copy address",
+                    onClick: () => {
+                      void copyCreatedAddress(createdAddress.address);
+                    },
+                  }
+                : undefined,
+            }),
+            error: error =>
+              error instanceof Error
+                ? error.message
+                : "Unable to create address",
+          }
+        );
+        try {
+          await createAddressToast.unwrap();
+        } catch {
+          return;
+        }
       }
 
       setSelectedIntegrationProvider("");
@@ -465,162 +647,319 @@ export const CreateAddressForm = ({
       }}
     >
       <FieldGroup className="gap-5">
-        <div className="grid gap-3 md:grid-cols-[minmax(0,1.15fr)_auto_minmax(0,0.85fr)] md:items-start">
-          <form.Field
-            name="localPart"
-            children={field => {
-              const isInvalid =
-                field.state.meta.isTouched && !field.state.meta.isValid;
-
-              return (
-                <Field data-invalid={isInvalid}>
-                  <FieldLabel htmlFor="address-local-part">Username</FieldLabel>
-                  <InputGroup>
-                    {forcedLocalPartPrefixText ? (
-                      <InputGroupAddon>
-                        <Tooltip>
-                          <TooltipTrigger
-                            render={
-                              <span className="inline-flex cursor-help" />
-                            }
-                          >
-                            <InputGroupText>
-                              {forcedLocalPartPrefixText}
-                            </InputGroupText>
-                          </TooltipTrigger>
-                          <TooltipContent side="top" sideOffset={6}>
-                            Addresses created here always start with{" "}
-                            {forcedLocalPartPrefixText}
-                          </TooltipContent>
-                        </Tooltip>
-                      </InputGroupAddon>
-                    ) : null}
-                    <InputGroupInput
-                      id="address-local-part"
-                      name={field.name}
-                      value={field.state.value}
-                      maxLength={localPartMaxLength || undefined}
-                      onBlur={field.handleBlur}
-                      onChange={event => field.handleChange(event.target.value)}
-                      placeholder="support"
-                      disabled={isLocalPartInputDisabled}
-                      aria-invalid={isInvalid}
-                    />
-                    <InputGroupAddon align="inline-end">
-                      <InputGroupButton
-                        variant="outline"
-                        size="xs"
-                        className="cursor-pointer border-none bg-transparent! uppercase tracking-[0.08em]"
-                        aria-label="Generate random username"
-                        title="Generate random username"
-                        disabled={isLocalPartInputDisabled}
-                        onClick={() =>
-                          field.handleChange(
-                            generateRandomLocalPart(
-                              field.state.value,
-                              localPartMaxLength
-                            )
-                          )
-                        }
-                      >
-                        <HugeiconsIcon
-                          icon={ShuffleIcon}
-                          strokeWidth={1.8}
-                          className="size-3.5"
-                        />
-                        <span className="text-[10px] font-mono">RANDOM</span>
-                      </InputGroupButton>
-                    </InputGroupAddon>
-                  </InputGroup>
-                  {isInvalid ? (
-                    <FieldError
-                      errors={toFieldErrors(field.state.meta.errors)}
-                    />
-                  ) : null}
-                </Field>
-              );
+        <div className="flex gap-2 border-b border-border/70 pb-3 mb-2">
+          <Button
+            type="button"
+            variant={isBulk ? "ghost" : "secondary"}
+            onClick={() => {
+              setIsBulk(false);
+              setBulkCountError(null);
+              setBulkPrefixError(null);
+              setBulkStartIndexError(null);
             }}
-          />
-
-          <div aria-hidden="true" className="hidden md:flex md:flex-col">
-            <div className="h-3.5" />
-            <span className="mt-3.5 inline-flex h-8 items-center justify-center px-1 text-sm font-semibold text-muted-foreground">
-              @
-            </span>
-          </div>
-
-          <form.Field
-            name="domain"
-            children={field => {
-              const isInvalid =
-                field.state.meta.isTouched && !field.state.meta.isValid;
-              const selectedValue =
-                getNormalizedSelectedDomain(field.state.value) || "";
-              const isDomainSelectDisabled =
-                isDomainsLoading || availableDomains.length === 0;
-
-              return (
-                <Field data-invalid={isInvalid}>
-                  <FieldLabel htmlFor="address-domain">Domain</FieldLabel>
-                  {isDomainsLoading ? (
-                    <Select disabled value="">
-                      <SelectTrigger
-                        id="address-domain"
-                        name={field.name}
-                        className="h-10 w-full cursor-not-allowed"
-                        aria-invalid={isInvalid}
-                      >
-                        <Skeleton className="h-4 w-2/3 rounded-sm" />
-                      </SelectTrigger>
-                    </Select>
-                  ) : availableDomains.length <= 1 ? (
-                    <Input
-                      id="address-domain"
-                      disabled
-                      value={defaultDomain}
-                      aria-invalid={isInvalid}
-                    />
-                  ) : (
-                    <Select
-                      disabled={isDomainSelectDisabled}
-                      value={selectedValue}
-                      onValueChange={value =>
-                        field.handleChange(normalizeDomainToken(value ?? ""))
-                      }
-                    >
-                      <SelectTrigger
-                        id="address-domain"
-                        name={field.name}
-                        onBlur={field.handleBlur}
-                        className="h-10 w-full cursor-pointer disabled:cursor-not-allowed"
-                        aria-invalid={isInvalid}
-                      >
-                        <SelectValue placeholder="Select domain" />
-                      </SelectTrigger>
-                      <SelectContent align="start">
-                        {availableDomains.map(domain => (
-                          <SelectItem key={domain} value={domain}>
-                            {domain}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  )}
-                  {availableDomains.length === 0 && !isDomainsLoading ? (
-                    <FieldDescription>
-                      No domains configured on the backend.
-                    </FieldDescription>
-                  ) : null}
-                  {isInvalid ? (
-                    <FieldError
-                      errors={toFieldErrors(field.state.meta.errors)}
-                    />
-                  ) : null}
-                </Field>
-              );
+            className="cursor-pointer"
+            size="sm"
+          >
+            Single Address
+          </Button>
+          <Button
+            type="button"
+            variant={isBulk ? "secondary" : "ghost"}
+            onClick={() => {
+              setIsBulk(true);
+              setBulkCountError(null);
+              setBulkPrefixError(null);
+              setBulkStartIndexError(null);
             }}
-          />
+            className="cursor-pointer"
+            size="sm"
+          >
+            Bulk Address
+          </Button>
         </div>
+
+        {isBulk ? (
+          <div className="grid gap-4 md:grid-cols-2">
+            <div className="md:col-span-2">
+              <Field>
+                <FieldLabel>Naming Option</FieldLabel>
+                <RadioGroup
+                  value={bulkNamingType}
+                  className="grid gap-2 sm:grid-cols-2"
+                  onValueChange={value => {
+                    setBulkNamingType(value as "random" | "sequential");
+                    setBulkCountError(null);
+                    setBulkPrefixError(null);
+                    setBulkStartIndexError(null);
+                  }}
+                >
+                  <label
+                    htmlFor="address-bulk-naming-random"
+                    className="flex min-h-9 cursor-pointer items-center gap-2.5 rounded-md border border-border/80 px-3 py-2 text-sm transition-colors hover:bg-muted/45"
+                  >
+                    <RadioGroupItem
+                      id="address-bulk-naming-random"
+                      value="random"
+                    />
+                    <HugeiconsIcon
+                      icon={ShuffleIcon}
+                      strokeWidth={2}
+                      className="size-3.5 shrink-0 text-muted-foreground"
+                      aria-hidden="true"
+                    />
+                    <span className="font-medium">Randomized names</span>
+                  </label>
+                  <label
+                    htmlFor="address-bulk-naming-sequential"
+                    className="flex min-h-9 cursor-pointer items-center gap-2.5 rounded-md border border-border/80 px-3 py-2 text-sm transition-colors hover:bg-muted/45"
+                  >
+                    <RadioGroupItem
+                      id="address-bulk-naming-sequential"
+                      value="sequential"
+                    />
+                    <HugeiconsIcon
+                      icon={ConnectIcon}
+                      strokeWidth={2}
+                      className="size-3.5 shrink-0 text-muted-foreground"
+                      aria-hidden="true"
+                    />
+                    <span className="font-medium">Sequential names</span>
+                  </label>
+                </RadioGroup>
+              </Field>
+            </div>
+
+            {bulkNamingType === "sequential" ? (
+              <>
+                <Field data-invalid={Boolean(bulkPrefixError)}>
+                  <FieldLabel htmlFor="address-bulk-prefix">Prefix</FieldLabel>
+                  <Input
+                    id="address-bulk-prefix"
+                    type="text"
+                    value={bulkPrefix}
+                    onChange={event => {
+                      setBulkPrefix(event.target.value);
+                      setBulkPrefixError(null);
+                    }}
+                    placeholder="box"
+                    aria-invalid={Boolean(bulkPrefixError)}
+                  />
+                  {bulkPrefixError ? (
+                    <FieldError errors={[{ message: bulkPrefixError }]} />
+                  ) : null}
+                </Field>
+                <Field data-invalid={Boolean(bulkStartIndexError)}>
+                  <FieldLabel htmlFor="address-bulk-start-index">
+                    Start Number
+                  </FieldLabel>
+                  <Input
+                    id="address-bulk-start-index"
+                    type="number"
+                    min={0}
+                    value={bulkStartIndex}
+                    onChange={event => {
+                      const val = event.target.value;
+                      setBulkStartIndex(val === "" ? 0 : Number(val));
+                      setBulkStartIndexError(null);
+                    }}
+                    placeholder="1"
+                    aria-invalid={Boolean(bulkStartIndexError)}
+                  />
+                  {bulkStartIndexError ? (
+                    <FieldError errors={[{ message: bulkStartIndexError }]} />
+                  ) : null}
+                </Field>
+              </>
+            ) : null}
+
+            <div
+              className={bulkNamingType === "sequential" ? "md:col-span-2" : ""}
+            >
+              <Field data-invalid={Boolean(bulkCountError)}>
+                <FieldLabel htmlFor="address-bulk-count">Quantity</FieldLabel>
+                <Input
+                  id="address-bulk-count"
+                  type="number"
+                  min={1}
+                  max={20}
+                  step={1}
+                  value={bulkCount}
+                  onChange={event => {
+                    const val = event.target.value;
+                    setBulkCount(val === "" ? 1 : Number(val));
+                    setBulkCountError(null);
+                  }}
+                  placeholder="5"
+                  aria-invalid={Boolean(bulkCountError)}
+                />
+                {bulkCountError ? (
+                  <FieldError errors={[{ message: bulkCountError }]} />
+                ) : null}
+              </Field>
+            </div>
+
+            <div className="md:col-span-2">
+              <form.Field
+                name="domain"
+                children={field => {
+                  const isInvalid =
+                    field.state.meta.isTouched && !field.state.meta.isValid;
+                  const selectedValue =
+                    getNormalizedSelectedDomain(field.state.value) || "";
+                  return (
+                    <Field data-invalid={isInvalid}>
+                      <FieldLabel htmlFor="address-domain">Domain</FieldLabel>
+                      <DomainPicker
+                        id="address-domain"
+                        name={field.name}
+                        domains={availableDomains}
+                        value={selectedValue}
+                        isLoading={isDomainsLoading}
+                        invalid={isInvalid}
+                        onBlur={field.handleBlur}
+                        onValueChange={field.handleChange}
+                      />
+                      {availableDomains.length === 0 && !isDomainsLoading ? (
+                        <FieldDescription>
+                          No domains configured on the backend.
+                        </FieldDescription>
+                      ) : null}
+                      {isInvalid ? (
+                        <FieldError
+                          errors={toFieldErrors(field.state.meta.errors)}
+                        />
+                      ) : null}
+                    </Field>
+                  );
+                }}
+              />
+            </div>
+          </div>
+        ) : (
+          <div className="grid gap-3 md:grid-cols-[minmax(0,1.15fr)_auto_minmax(0,0.85fr)] md:items-start">
+            <form.Field
+              name="localPart"
+              children={field => {
+                const isInvalid =
+                  field.state.meta.isTouched && !field.state.meta.isValid;
+
+                return (
+                  <Field data-invalid={isInvalid}>
+                    <FieldLabel htmlFor="address-local-part">
+                      Username
+                    </FieldLabel>
+                    <InputGroup>
+                      {forcedLocalPartPrefixText ? (
+                        <InputGroupAddon>
+                          <Tooltip>
+                            <TooltipTrigger
+                              render={
+                                <span className="inline-flex cursor-help" />
+                              }
+                            >
+                              <InputGroupText>
+                                {forcedLocalPartPrefixText}
+                              </InputGroupText>
+                            </TooltipTrigger>
+                            <TooltipContent side="top" sideOffset={6}>
+                              Addresses created here always start with{" "}
+                              {forcedLocalPartPrefixText}
+                            </TooltipContent>
+                          </Tooltip>
+                        </InputGroupAddon>
+                      ) : null}
+                      <InputGroupInput
+                        id="address-local-part"
+                        name={field.name}
+                        value={field.state.value}
+                        maxLength={localPartMaxLength || undefined}
+                        onBlur={field.handleBlur}
+                        onChange={event =>
+                          field.handleChange(event.target.value)
+                        }
+                        placeholder="support"
+                        disabled={isLocalPartInputDisabled}
+                        aria-invalid={isInvalid}
+                      />
+                      <InputGroupAddon align="inline-end">
+                        <InputGroupButton
+                          variant="outline"
+                          size="xs"
+                          className="cursor-pointer border-none bg-transparent! uppercase tracking-[0.08em]"
+                          aria-label="Generate random username"
+                          title="Generate random username"
+                          disabled={isLocalPartInputDisabled}
+                          onClick={() =>
+                            field.handleChange(
+                              generateRandomLocalPart(
+                                field.state.value,
+                                localPartMaxLength
+                              )
+                            )
+                          }
+                        >
+                          <HugeiconsIcon
+                            icon={ShuffleIcon}
+                            strokeWidth={1.8}
+                            className="size-3.5"
+                          />
+                          <span className="text-[10px] font-mono">RANDOM</span>
+                        </InputGroupButton>
+                      </InputGroupAddon>
+                    </InputGroup>
+                    {isInvalid ? (
+                      <FieldError
+                        errors={toFieldErrors(field.state.meta.errors)}
+                      />
+                    ) : null}
+                  </Field>
+                );
+              }}
+            />
+
+            <div aria-hidden="true" className="hidden md:flex md:flex-col">
+              <div className="h-3.5" />
+              <span className="mt-3.5 inline-flex h-8 items-center justify-center px-1 text-sm font-semibold text-muted-foreground">
+                @
+              </span>
+            </div>
+
+            <form.Field
+              name="domain"
+              children={field => {
+                const isInvalid =
+                  field.state.meta.isTouched && !field.state.meta.isValid;
+                const selectedValue =
+                  getNormalizedSelectedDomain(field.state.value) || "";
+                return (
+                  <Field data-invalid={isInvalid}>
+                    <FieldLabel htmlFor="address-domain">Domain</FieldLabel>
+                    <DomainPicker
+                      id="address-domain"
+                      name={field.name}
+                      domains={availableDomains}
+                      value={selectedValue}
+                      isLoading={isDomainsLoading}
+                      invalid={isInvalid}
+                      onBlur={field.handleBlur}
+                      onValueChange={field.handleChange}
+                    />
+                    {availableDomains.length === 0 && !isDomainsLoading ? (
+                      <FieldDescription>
+                        No domains configured on the backend.
+                      </FieldDescription>
+                    ) : null}
+                    {isInvalid ? (
+                      <FieldError
+                        errors={toFieldErrors(field.state.meta.errors)}
+                      />
+                    ) : null}
+                  </Field>
+                );
+              }}
+            />
+          </div>
+        )}
 
         <div className="grid gap-3 md:grid-cols-[minmax(0,2fr)_minmax(0,3fr)]">
           <form.Field
@@ -1004,30 +1343,6 @@ export const CreateAddressForm = ({
                       </Link>
                     </span>
                   </div>
-                  <Button
-                    variant="outline"
-                    disabled={
-                      createMutation.isPending || isLocalPartInputDisabled
-                    }
-                    type="submit"
-                    className="w-fit cursor-pointer"
-                    onMouseEnter={() => {
-                      sendIconRef.current?.startAnimation();
-                    }}
-                    onMouseLeave={() => {
-                      sendIconRef.current?.stopAnimation();
-                    }}
-                  >
-                    <SendIcon
-                      ref={sendIconRef}
-                      size={16}
-                      className="mt-px shrink-0"
-                      aria-hidden="true"
-                    />
-                    {createMutation.isPending
-                      ? "Creating..."
-                      : "Create address"}
-                  </Button>
                 </div>
                 {isInvalid ? (
                   <FieldError errors={toFieldErrors(field.state.meta.errors)} />
@@ -1036,6 +1351,33 @@ export const CreateAddressForm = ({
             );
           }}
         />
+
+        <div className="flex justify-end mt-2">
+          <Button
+            variant="outline"
+            disabled={createMutation.isPending || isLocalPartInputDisabled}
+            type="submit"
+            className="w-fit cursor-pointer"
+            onMouseEnter={() => {
+              sendIconRef.current?.startAnimation();
+            }}
+            onMouseLeave={() => {
+              sendIconRef.current?.stopAnimation();
+            }}
+          >
+            <SendIcon
+              ref={sendIconRef}
+              size={16}
+              className="mt-px shrink-0"
+              aria-hidden="true"
+            />
+            {createMutation.isPending
+              ? "Creating..."
+              : isBulk
+                ? `Create ${bulkCount} addresses`
+                : "Create address"}
+          </Button>
+        </div>
       </FieldGroup>
     </form>
   );
